@@ -29,7 +29,7 @@ use penumbra_shielded_pool::component::{NoteManager, SupplyRead, SupplyWrite};
 use penumbra_storage::{StateRead, StateWrite};
 use penumbra_transaction::action::{Delegate, Undelegate};
 use sha2::{Digest, Sha256};
-use tendermint::abci;
+use tendermint::v0_34::abci;
 use tendermint::validator::Update;
 
 use tendermint::abci::types::Misbehavior;
