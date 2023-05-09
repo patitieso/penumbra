@@ -56,7 +56,6 @@ pub fn generate_tm_config(
         tm_config.p2p.laddr =
             parse_tm_address(None, &Url::parse(format!("tcp://{}", p2p).as_str())?)?;
     }
-    //Ok(toml::to_string(&tm_config)?)
     Ok(tm_config)
 }
 
@@ -281,5 +280,84 @@ pub fn get_testnet_dir(testnet_dir: Option<PathBuf>) -> PathBuf {
     match testnet_dir {
         Some(o) => o,
         None => canonicalize_path("~/.penumbra/testnet_data"),
+    }
+}
+
+/// Extract a [TendermintAddress] obtained from the RPC `/net_info` endpoint.
+/// The raw value is a String formatted as:
+///
+///   * `Listener(@34.28.180.178:26656)` or
+///   * `Listener(@tcp://34.28.180.178:26656)` or
+///   * `Listener(@)`
+///
+/// It may be possible for a node [Id] to proceed the `@`.
+pub fn parse_tm_address_listener(s: &str) -> Option<TendermintAddress> {
+    let re = regex::Regex::new(r"Listener\(.*@(tcp://)?(.*)\)").ok()?;
+    let groups = re.captures(s).unwrap();
+    let r: Option<String> = groups.get(2).map_or(None, |m| Some(m.as_str().to_string()));
+    match r {
+        Some(t) => t.parse::<TendermintAddress>().ok(),
+        None => None,
+    }
+}
+
+// Some of these tests duplicate tests in the upstream Tendermint crates.
+// The underlying structs upstream are mostly just Strings, though, and since
+// our code wrangles these types for interpolation in config files from multiple
+// API endpoint sources, it's important to validate expected behavior.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn parse_tendermint_address_tcp() -> anyhow::Result<()> {
+        let tm1 = parse_tm_address(None, &Url::parse("tcp://35.226.255.25:26656")?)?;
+        match tm1 {
+            TendermintAddress::Tcp {
+                peer_id,
+                host,
+                port,
+            } => {
+                assert!(peer_id == None);
+                assert!(port == 26656);
+                assert!(host == "35.226.255.25");
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+    #[test]
+    // The Tendermint RPC net_info endpoint will return Listener information
+    // formatted as:
+    //
+    //   * `Listener(@34.28.180.178:26656)` or
+    //   * `Listener(@tcp://34.28.180.178:26656)` or
+    //   * `Listener(@)`
+    //
+    // I've yet to observe a node_id preceding the `@`.
+    fn parse_tendermint_address_listener() -> anyhow::Result<()> {
+        let l1 = "Listener(@34.28.180.178:26656)";
+        let r1 = parse_tm_address_listener(l1);
+        assert!(r1 == Some("34.28.180.178:26656".parse::<TendermintAddress>()?));
+
+        let l2 = "Listener(tcp://@34.28.180.178:26656)";
+        let r2 = parse_tm_address_listener(l2);
+        assert!(r2 == Some("tcp://34.28.180.178:26656".parse::<TendermintAddress>()?));
+
+        let l3 = "Listener(@)";
+        let r3 = parse_tm_address_listener(l3);
+        assert!(r3 == None);
+
+        Ok(())
+    }
+    #[test]
+    fn parse_tendermint_address_from_listener() -> anyhow::Result<()> {
+        // Most upstream Tendermint types are just String structs, so there's
+        // no handling of the `Listener()` wrapper. We must regex it out.
+        let l = tendermint::node::info::ListenAddress::new(
+            "Listener(@34.28.180.178:26656)".to_string(),
+        );
+        let tm1 = TendermintAddress::from_listen_address(&l);
+        assert!(tm1 == None);
+        Ok(())
     }
 }
