@@ -5,6 +5,10 @@ use parking_lot::Mutex;
 use penumbra_chain::params::{ChainParameters, FmdParameters};
 use penumbra_crypto::{
     asset::{self, Id},
+    dex::{
+        lp::position::{self, State},
+        TradingPair,
+    },
     note,
     stake::{DelegationToken, IdentityKey},
     Address, Amount, Asset, FieldExt, Fq, FullViewingKey, Note, Nullifier, Rseed, Value,
@@ -1344,5 +1348,39 @@ impl Storage {
         .await??;
 
         Ok(())
+    }
+
+    pub async fn owned_position_ids(
+        &self,
+        position_state: Option<State>,
+        trading_pair: Option<TradingPair>,
+    ) -> anyhow::Result<Vec<position::Id>> {
+        let pool = self.pool.clone();
+
+        let state_clause = match position_state {
+            Some(state) => state.to_string(),
+            None => "position_state".to_string(),
+        };
+
+        let pair_clause = match trading_pair {
+            Some(pair) => pair.to_string(),
+            None => "trading_pair".to_string(),
+        };
+
+        spawn_blocking(move || {
+            pool.get()?
+                .prepare_cached(
+                    "SELECT position_id FROM positions 
+                    WHERE position_state = ?1 
+                    AND trading_pair = ?2",
+                )?
+                .query_and_then([state_clause, pair_clause], |row| {
+                    let position_id: Vec<u8> = row.get("position_id")?;
+
+                    position::Id::decode(position_id.as_slice())
+                })?
+                .collect()
+        })
+        .await?
     }
 }
